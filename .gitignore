@@ -1,0 +1,24 @@
+# ---- Python ----
+.venv/
+__pycache__/
+*.pyc
+
+# ---- Mallas y código generado por OpenFOAM ----
+polyMesh/
+extendedFeatureEdgeMesh/
+dynamicCode/
+
+# ---- Directorios de tiempo (resultados regenerables) ----
+# Se conserva 0/ (condiciones iniciales); se ignora el resto.
+[1-9]*/
+0.*/
+processor*/
+postProcessing/
+
+# ---- Logs de OpenFOAM ----
+log.*
+*.log
+
+# ---- Marcadores de ParaView ----
+*.foam
+*.OpenFOAM
