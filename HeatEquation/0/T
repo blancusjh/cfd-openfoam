@@ -1,0 +1,39 @@
+FoamFile 
+{
+  format ascii; 
+  class volScalarField;
+  object T;
+}
+
+dimensions [0 0 0 1 0 0 0]; // [masa longitud tiempo temperatura ...]
+
+internalField uniform 273; 
+
+
+boundaryField 
+{
+
+  left
+  {
+    type    fixedValue; 
+    value   uniform 573; //hot
+  }
+
+  right
+  {
+    type    fixedValue; 
+    value   uniform 273; //cold
+  }
+
+
+topAndBottom 
+{
+  type    zeroGradient; 
+}
+
+frontAndBack 
+{
+  type    empty;
+}
+
+}
