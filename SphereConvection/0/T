@@ -1,0 +1,51 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     | Version:  13
+    \\  /    A nd           |
+     \\/     M anipulation  |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    format      ascii;
+    class       volScalarField;
+    object      T;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+dimensions      [0 0 0 1 0 0 0];
+
+internalField   uniform 573;        // esfera inicialmente a 573 K
+
+boundaryField
+{
+    walls
+    {
+        // Condicion de Robin (conveccion / enfriamiento de Newton):
+        //   -k dT/dn = h (T_s - Tinf)   =>   dT/dn = -Kc (T_s - Tinf),  Kc = h/k
+        //
+        // La BC 'mixed' escribe:  T_s = f*refValue + (1-f)*(T_celda + refGrad/delta)
+        // Igualando con Robin (refGrad=0) se obtiene exactamente:
+        //   refValue = Tinf,   f = Kc / (Kc + deltaCoeffs)
+        // 'codedMixed' recalcula f en cada paso usando deltaCoeffs de la malla.
+        type            codedMixed;
+
+        refValue        uniform 293;    // Tinf (se re-fija en el codigo)
+        refGradient     uniform 0;
+        valueFraction   uniform 1;
+        value           uniform 573;
+
+        name            robinConvection;
+        code
+        #{
+            const scalar Kc   = 50.0;    // h/k [1/m]  ->  Bi = Kc*R = 50*0.1 = 5
+            const scalar Tinf = 293.0;   // temperatura del fluido [K]
+
+            this->refValue()      = Tinf;
+            this->refGrad()       = 0.0;
+            this->valueFraction() = Kc/(Kc + this->patch().deltaCoeffs());
+        #};
+    }
+}
+
+// ************************************************************************* //
