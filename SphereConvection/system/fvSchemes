@@ -1,0 +1,25 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     | Version:  13
+    \\  /    A nd           |
+     \\/     M anipulation  |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    format      ascii;
+    class       dictionary;
+    object      fvSchemes;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+ddtSchemes          { default Euler; }
+gradSchemes         { default Gauss linear; }
+divSchemes          { default none; }
+// 'limited corrected 0.33' acota la correccion explicita de no-ortogonalidad
+// (malla cubo->esfera con caras a ~89 grados) -> estable sin divergir.
+laplacianSchemes    { default Gauss linear limited corrected 0.33; }
+interpolationSchemes { default linear; }
+snGradSchemes       { default limited corrected 0.33; }
+
+// ************************************************************************* //
