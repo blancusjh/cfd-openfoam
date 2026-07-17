@@ -1,0 +1,35 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     | Version:  13
+    \\  /    A nd           |
+     \\/     M anipulation  |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    format      ascii;
+    class       dictionary;
+    object      controlDict;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+solver          fluid;
+
+startFrom       startTime;
+startTime       0;
+stopAt          endTime;
+endTime         30;             // s de simulacion (pluma bien desarrollada)
+
+deltaT          0.01;           // paso inicial (se ajusta solo)
+
+writeControl    adjustableRunTime;
+writeInterval   0.25;           // guarda cada 0.25 s -> ~120 instantes
+
+purgeWrite      0;
+runTimeModifiable yes;
+
+adjustTimeStep  yes;            // paso adaptativo segun Courant
+maxCo           0.5;
+maxDeltaT       0.1;
+
+// ************************************************************************* //
