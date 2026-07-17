@@ -1,0 +1,53 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     | Version:  13
+    \\  /    A nd           |
+     \\/     M anipulation  |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    format      ascii;
+    class       dictionary;
+    location    "constant";
+    object      physicalProperties;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+// Aire con aproximacion de Boussinesq (rho = rho0*(1 - beta*(T-T0)))
+thermoType
+{
+    type            heRhoThermo;
+    mixture         pureMixture;
+    transport       const;
+    thermo          eConst;
+    equationOfState Boussinesq;
+    specie          specie;
+    energy          sensibleInternalEnergy;
+}
+
+mixture
+{
+    specie
+    {
+        molWeight       28.9;
+    }
+    equationOfState
+    {
+        rho0            1.2;      // densidad de referencia del aire [kg/m^3]
+        T0              300;      // temperatura de referencia [K]
+        beta            3.3e-3;   // coef. expansion termica ~ 1/T0 [1/K]
+    }
+    thermodynamics
+    {
+        Cv              712;
+        hf              0;
+    }
+    transport
+    {
+        mu              1.8e-5;   // viscosidad dinamica del aire [Pa.s]
+        Pr              0.7;      // numero de Prandtl
+    }
+}
+
+// ************************************************************************* //
