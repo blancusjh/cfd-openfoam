@@ -23,7 +23,7 @@ endTime         30;             // s de simulacion (pluma bien desarrollada)
 deltaT          0.01;           // paso inicial (se ajusta solo)
 
 writeControl    adjustableRunTime;
-writeInterval   0.25;           // guarda cada 0.25 s -> ~120 instantes
+writeInterval   0.01;           // guarda cada 0.25 s -> ~120 instantes
 
 purgeWrite      0;
 runTimeModifiable yes;
