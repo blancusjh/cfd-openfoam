@@ -32,11 +32,51 @@ def _glyph(P, U, factor):
     return pts.glyph(orient="vec", scale="vec", factor=factor)
 
 
+def _strip(ds, keep):
+    """Deja solo los arreglos `keep` (ahorra RAM en los frames precalculados)."""
+    for arrs in (ds.point_data, ds.cell_data, ds.field_data):
+        for name in list(arrs.keys()):
+            if name not in keep:
+                del arrs[name]
+    return ds
+
+
+def _opacity_tf(preset, factor):
+    """Funcion de transferencia de opacidad: 256 valores en [0,255].
+
+    Con exactamente 256 valores pyvista usa el arreglo tal cual como tabla
+    (espera 0-255); con [0,1] la opacidad efectiva seria ~1/255 (invisible).
+    """
+    x = np.linspace(0.0, 1.0, 256)
+    if preset == "uniforme":
+        y = np.ones_like(x)
+    elif preset == "linear":
+        y = x
+    elif preset == "sigmoid":
+        y = 1.0 / (1.0 + np.exp(-10.0 * (x - 0.5)))
+    else:                                   # sigmoid_suave
+        y = 1.0 / (1.0 + np.exp(-6.0 * (x - 0.25)))
+    return y * factor * 255.0
+
+
 class Representation:
     def __init__(self, viewer):
         self.v = viewer
         self.actor = None
         self.enabled = False
+
+    def scalars_name(self):
+        return self.v.scalar_field
+
+    def bake_frame(self):
+        """Dataset listo-para-dibujar del instante actual (solo su escalar)."""
+        return _strip(self.dataset(), (self.scalars_name(),))
+
+    def apply_frame(self, frame):
+        if self.actor is None:
+            self.build(frame)
+        else:
+            self._swap(frame, self.scalars_name())
 
     def set_enabled(self, on):
         self.enabled = bool(on)
@@ -80,9 +120,9 @@ class SliceRep(Representation):
         v = self.v
         return v.internal.slice(normal=v.plane_n(), origin=v.plane_o())
 
-    def build(self):
+    def build(self, ds=None):
         v = self.v
-        ds = self.dataset()
+        ds = self.dataset() if ds is None else ds
         if ds.n_points == 0:
             return
         self.actor = v.plotter.add_mesh(
@@ -105,9 +145,9 @@ class IsoRep(Representation):
         v = self.v
         return v.internal.contour(isosurfaces=self.values(), scalars=v.scalar_field)
 
-    def build(self):
+    def build(self, ds=None):
         v = self.v
-        ds = self.dataset()
+        ds = self.dataset() if ds is None else ds
         if ds.n_points == 0:
             return
         self.actor = v.plotter.add_mesh(
@@ -121,11 +161,12 @@ class IsoRep(Representation):
 class ClipRep(Representation):
     def dataset(self):
         v = self.v
-        return v.internal.clip(normal=v.plane_n(), origin=v.plane_o())
+        return v.internal.clip(normal=v.plane_n(),
+                               origin=v.plane_o()).extract_surface()
 
-    def build(self):
+    def build(self, ds=None):
         v = self.v
-        ds = self.dataset()
+        ds = self.dataset() if ds is None else ds
         if ds.n_points == 0:
             return
         self.actor = v.plotter.add_mesh(
@@ -151,7 +192,7 @@ class VolumeRep(Representation):
         self.grid.set_active_scalars(self.field)
         self.actor = v.plotter.add_volume(
             self.grid, scalars=self.field, cmap=v.cmap, clim=v.scalar_clim,
-            opacity=v.params["vol_preset"],
+            opacity=_opacity_tf(v.params["vol_preset"], v.params["vol_opacity"]),
             opacity_unit_distance=v.params["vol_unit"],
             shade=False, scalar_bar_args=v.sbar(self.field))
 
@@ -162,11 +203,25 @@ class VolumeRep(Representation):
             return
         self.grid[self.field] = v.model.volume_values(v.t, self.field)
 
+    def bake_frame(self):
+        v = self.v
+        return np.asarray(v.model.volume_values(v.t, v.scalar_field),
+                          dtype=np.float32)
+
+    def apply_frame(self, vals):
+        if self.actor is None:
+            self.build()
+        else:
+            self.grid[self.field] = vals
+
 
 # ---------- representaciones de campos VECTORIALES ----------
 
 class GlyphRep(Representation):
     """Flechas eulerianas: puntos fijos sobre el plano de corte."""
+
+    def scalars_name(self):
+        return "mag"
 
     def dataset(self):
         v = self.v
@@ -179,9 +234,9 @@ class GlyphRep(Representation):
         idx = np.arange(0, len(P), step)
         return _glyph(P[idx], U[idx], v.params["glyph_factor"])
 
-    def build(self):
+    def build(self, ds=None):
         v = self.v
-        ds = self.dataset()
+        ds = self.dataset() if ds is None else ds
         if ds.n_points == 0:
             return
         self.actor = v.plotter.add_mesh(
@@ -265,6 +320,9 @@ class TracerRep(GlyphRep):
 class StreamRep(Representation):
     """Streamlines integradas desde una fuente esferica alrededor de la esfera."""
 
+    def scalars_name(self):
+        return "mag"
+
     def dataset(self):
         v, m = self.v, self.v.model
         s = v.internal.streamlines(
@@ -277,9 +335,9 @@ class StreamRep(Representation):
         s["mag"] = np.linalg.norm(np.asarray(s[v.vector_field]), axis=1)
         return s.tube(radius=v.params["stream_tube"])
 
-    def build(self):
+    def build(self, ds=None):
         v = self.v
-        ds = self.dataset()
+        ds = self.dataset() if ds is None else ds
         if ds.n_points == 0:
             return
         self.actor = v.plotter.add_mesh(

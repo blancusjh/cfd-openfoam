@@ -1,18 +1,71 @@
 """Panel de control del visor (solo construccion de widgets; el cableado de
 senales vive en main.py)."""
-from qtpy.QtCore import Qt
+from qtpy.QtCore import QEvent, Qt
 from qtpy.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout,
                             QGroupBox, QHBoxLayout, QLabel, QPushButton,
                             QSlider, QSpinBox, QVBoxLayout, QWidget)
 
 CMAPS = ["inferno", "viridis", "plasma", "magma", "cividis", "turbo",
-         "coolwarm", "jet"]
-VEC_CMAPS = ["cool", "turbo", "viridis", "plasma", "spring"]
-VOL_PRESETS = ["sigmoid", "sigmoid_5", "sigmoid_10", "linear", "geom"]
+         "coolwarm", "jet", "gray", "hot"]
+VEC_CMAPS = ["cool", "turbo", "viridis", "plasma", "spring", "gray", "hot"]
+VOL_PRESETS = ["uniforme", "linear", "sigmoid", "sigmoid_suave"]
+
+
+class _DragValueMixin:
+    """Arrastre horizontal sobre la casilla para cambiar el valor (estilo
+    Adobe): drag = deslizar el valor; click simple = editar tecleando."""
+
+    _px_per_step = 3.0
+
+    def _init_drag(self):
+        self._drag_x0 = None
+        self._drag_v0 = 0.0
+        self._drag_on = False
+        le = self.lineEdit()
+        le.installEventFilter(self)
+        le.setCursor(Qt.CursorShape.SizeHorCursor)
+
+    def eventFilter(self, obj, ev):
+        if obj is not self.lineEdit():
+            return super().eventFilter(obj, ev)
+        t = ev.type()
+        if t == QEvent.Type.MouseButtonPress \
+                and ev.button() == Qt.MouseButton.LeftButton:
+            self._drag_x0 = ev.globalPosition().x()
+            self._drag_v0 = self.value()
+            self._drag_on = False
+            return True
+        if t == QEvent.Type.MouseMove and self._drag_x0 is not None:
+            dx = ev.globalPosition().x() - self._drag_x0
+            if abs(dx) > 3:
+                self._drag_on = True
+            if self._drag_on:
+                val = self._drag_v0 + (dx / self._px_per_step) * self.singleStep()
+                self.setValue(round(val) if isinstance(self, QSpinBox) else val)
+            return True
+        if t == QEvent.Type.MouseButtonRelease and self._drag_x0 is not None:
+            was_drag, self._drag_x0 = self._drag_on, None
+            if not was_drag:
+                self.lineEdit().setFocus(Qt.FocusReason.MouseFocusReason)
+                self.lineEdit().selectAll()
+            return True
+        return super().eventFilter(obj, ev)
+
+
+class DragDSpin(_DragValueMixin, QDoubleSpinBox):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._init_drag()
+
+
+class DragISpin(_DragValueMixin, QSpinBox):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._init_drag()
 
 
 def _dspin(lo, hi, val, step=0.01, dec=3):
-    s = QDoubleSpinBox()
+    s = DragDSpin()
     s.setRange(lo, hi)
     s.setDecimals(dec)
     s.setSingleStep(step)
@@ -21,7 +74,7 @@ def _dspin(lo, hi, val, step=0.01, dec=3):
 
 
 def _ispin(lo, hi, val, step=1):
-    s = QSpinBox()
+    s = DragISpin()
     s.setRange(lo, hi)
     s.setSingleStep(step)
     s.setValue(val)
@@ -50,9 +103,13 @@ class ControlPanel(QWidget):
         row.addWidget(self.fps)
         row.addWidget(QLabel("paso"))
         row.addWidget(self.stride)
+        self.btn_bake = QPushButton("Precalcular animación")
+        self.bake_status = QLabel("precálculo: —")
         f.addWidget(self.time_label)
         f.addWidget(self.time_slider)
         f.addLayout(row)
+        f.addWidget(self.btn_bake)
+        f.addWidget(self.bake_status)
         lay.addWidget(g)
 
         # --- campos y rangos ---
@@ -101,6 +158,7 @@ class ControlPanel(QWidget):
         self.chk_volume = QCheckBox("volume rendering")
         self.vol_preset = QComboBox()
         self.vol_preset.addItems(VOL_PRESETS)
+        self.vol_opacity = _dspin(0, 1, 0.5, 0.05, 2)
         self.vol_unit = _dspin(0.01, 2, 0.3, 0.05, 2)
         self.chk_iso = QCheckBox("isosuperficies")
         self.iso_value = _dspin(-1e9, 1e9, 311)
@@ -111,6 +169,7 @@ class ControlPanel(QWidget):
         f.addRow("  opacidad corte", self.slice_op)
         f.addRow(self.chk_volume)
         f.addRow("  transferencia", self.vol_preset)
+        f.addRow("  opacidad global", self.vol_opacity)
         f.addRow("  dist. opacidad", self.vol_unit)
         f.addRow(self.chk_iso)
         f.addRow("  isovalor", self.iso_value)

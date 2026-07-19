@@ -13,6 +13,7 @@ El plano de corte se define por los angulos θ (desde la vertical +y) y
 φ (azimut de +x a +z) de su normal, mas una traslacion d a lo largo de ella;
 tambien puede arrastrarse directamente en escena (checkbox del widget).
 """
+import os
 import sys
 from pathlib import Path
 
@@ -43,6 +44,8 @@ class Viewer(QMainWindow):
         # ---- estado compartido que leen las representaciones ----
         self.idx = len(m.times) - 1                  # arrancar en el ultimo t
         self.internal = m.load(self.t)
+        self._internal_t = self.t
+        self._baked = None                           # precómputo de animación
         self.scalar_field = "T" if "T" in m.scalars else m.scalars[0]
         self.vector_field = m.vectors[0] if m.vectors else None
         self.cmap = "inferno"
@@ -51,7 +54,8 @@ class Viewer(QMainWindow):
         self.scalar_clim = [lo, hi]
         vhi = m.field_range(self.vector_field, self.t)[1] if self.vector_field else 1
         self.vector_clim = [0.0, max(round(vhi, 2), 1e-6)]
-        self.params = dict(slice_opacity=0.9, vol_preset="sigmoid", vol_unit=0.3,
+        self.params = dict(slice_opacity=0.9, vol_preset="uniforme",
+                           vol_opacity=0.5, vol_unit=0.3,
                            iso_value=0.5 * (lo + hi), iso_n=3, iso_opacity=0.35,
                            glyph_n=400, glyph_factor=0.12, tracer_n=600,
                            stream_n=100, stream_tube=0.004, vec_cmap="cool")
@@ -151,8 +155,9 @@ class Viewer(QMainWindow):
                           ("iso", P.chk_iso), ("clip", P.chk_clip),
                           ("glyph", P.chk_glyph), ("tracer", P.chk_tracer),
                           ("stream", P.chk_stream)):
-            chk.toggled.connect(lambda on, n=name: self.reps[n].set_enabled(on))
+            chk.toggled.connect(lambda on, n=name: self._toggle_rep(n, on))
         for w, key, names in ((P.slice_op, "slice_opacity", ("slice",)),
+                              (P.vol_opacity, "vol_opacity", ("volume",)),
                               (P.vol_unit, "vol_unit", ("volume",)),
                               (P.iso_value, "iso_value", ("iso",)),
                               (P.iso_n, "iso_n", ("iso",)),
@@ -170,17 +175,37 @@ class Viewer(QMainWindow):
             lambda v: self._set_param("vec_cmap", v, self.vector_reps))
         P.bg_combo.currentTextChanged.connect(self._on_background)
         P.cmap_combo.currentTextChanged.connect(self._on_cmap)
+        P.btn_bake.clicked.connect(self._bake)
         P.btn_shot.clicked.connect(self._screenshot)
         P.btn_gif.clicked.connect(self._export_gif)
 
+    def _toggle_rep(self, name, on):
+        if on:
+            self._ensure_internal()
+        self.reps[name].set_enabled(on)
+
     # ---- tiempo ----
+    def _ensure_internal(self):
+        """Recarga la malla del instante actual si quedo desfasada (tras
+        playback precalculado, que no toca el lector)."""
+        if self._internal_t != self.t:
+            self.internal = self.model.load(self.t)
+            self._internal_t = self.t
+
     def _set_time(self, idx, dt=None):
         self.idx = int(np.clip(idx, 0, len(self.model.times) - 1))
-        self.internal = self.model.load(self.t)
-        if dt is not None and dt > 0:
-            self.reps["tracer"].advect(dt)
-        for r in self.reps.values():
-            r.refresh()
+        enabled = [n for n, r in self.reps.items() if r.enabled]
+        frames = self._baked_frames(enabled)
+        if frames is not None:                       # via rapida: sin lector
+            for n in enabled:
+                self.reps[n].apply_frame(frames[n])
+        else:
+            self.internal = self.model.load(self.t)
+            self._internal_t = self.t
+            if dt is not None and dt > 0:
+                self.reps["tracer"].advect(dt)
+            for r in self.reps.values():
+                r.refresh()
         self.plotter.add_text(f"t = {self.t:.2f} s", name="tt", font_size=12,
                               color=self.fg)
         self.panel.time_label.setText(f"t = {self.t:.2f} s")
@@ -189,6 +214,61 @@ class Viewer(QMainWindow):
             self.panel.time_slider.setValue(self.idx)
             self.panel.time_slider.blockSignals(False)
         self.plotter.render()
+
+    # ---- precómputo de animación ----
+    def _bake_sig(self):
+        """Firma de los parametros que afectan la geometria precalculada."""
+        p, P = self.params, self.panel
+        return (tuple(sorted(n for n, r in self.reps.items() if r.enabled)),
+                self.scalar_field, self.vector_field, tuple(self.scalar_clim),
+                P.theta.value(), P.phi.value(), P.dist.value(),
+                p["iso_value"], p["iso_n"], p["glyph_n"], p["glyph_factor"],
+                p["tracer_n"], p["stream_n"], p["stream_tube"],
+                P.stride.value())
+
+    def _baked_frames(self, enabled):
+        b = self._baked
+        if not b or not enabled or b["sig"] != self._bake_sig():
+            return None
+        try:
+            return {n: b["frames"][(n, self.idx)] for n in enabled}
+        except KeyError:
+            return None                              # instante no precalculado
+
+    def _bake(self):
+        enabled = [n for n, r in self.reps.items() if r.enabled]
+        if not enabled:
+            self.panel.bake_status.setText("precálculo: no hay nada activado")
+            return
+        was_playing = self.timer.isActive()
+        if was_playing:
+            self.panel.btn_play.setChecked(False)
+        times, stride = self.model.times, self.panel.stride.value()
+        idxs = list(range(0, len(times), stride))
+        prog = QProgressDialog("Precalculando animación...", "Cancelar",
+                               0, len(idxs), self)
+        prog.setWindowModality(Qt.WindowModal)
+        sig, frames, prev = self._bake_sig(), {}, None
+        for k, i in enumerate(idxs):
+            prog.setValue(k)
+            QApplication.processEvents()
+            if prog.wasCanceled():
+                self.panel.bake_status.setText("precálculo: cancelado")
+                self._set_time(self.idx)             # resincronizar la escena
+                return
+            self.idx = i
+            self.internal = self.model.load(self.t)
+            self._internal_t = self.t
+            if "tracer" in enabled and prev is not None:
+                self.reps["tracer"].advect(times[i] - times[prev])
+            for n in enabled:
+                frames[(n, i)] = self.reps[n].bake_frame()
+            prev = i
+        prog.setValue(len(idxs))
+        self._baked = dict(sig=sig, frames=frames)
+        self.panel.bake_status.setText(
+            f"precálculo: {len(idxs)} frames listos ({', '.join(enabled)})")
+        self._set_time(0)
 
     def _tick(self):
         new = self.idx + self.panel.stride.value()
@@ -206,6 +286,7 @@ class Viewer(QMainWindow):
 
     # ---- campos y rangos ----
     def _rebuild(self, names):
+        self._ensure_internal()
         for n in names:
             self.reps[n].rebuild()
         self.plotter.render()
@@ -248,6 +329,7 @@ class Viewer(QMainWindow):
 
     # ---- plano de corte ----
     def _plane_reps_refresh(self):
+        self._ensure_internal()
         for n in ("slice", "clip", "glyph"):
             self.reps[n].refresh()
         self.plotter.render()
@@ -325,9 +407,15 @@ class Viewer(QMainWindow):
         imgs[0].save(path, save_all=True, append_images=imgs[1:],
                      duration=int(1000 / self.panel.fps.value()), loop=0)
 
-    def closeEvent(self, ev):
+    def _shutdown(self):
+        if getattr(self, "_closed", False):
+            return
+        self._closed = True
         self.timer.stop()
         self.plotter.close()
+
+    def closeEvent(self, ev):
+        self._shutdown()
         super().closeEvent(ev)
 
 
@@ -337,7 +425,12 @@ def main():
     w = Viewer(case)
     w.resize(1500, 1000)
     w.show()
-    sys.exit(app.exec())
+    app.aboutToQuit.connect(w._shutdown)
+    ret = app.exec()
+    w._shutdown()
+    # el teardown de VTK/Cocoa al final del interprete puede colgar el proceso
+    # en macOS; con todo ya cerrado limpiamente, salir de forma inmediata.
+    os._exit(ret)
 
 
 if __name__ == "__main__":
